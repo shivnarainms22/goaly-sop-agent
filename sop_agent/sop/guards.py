@@ -9,11 +9,11 @@ from sop_agent.data.repository import Repository
 
 MIN_REASON_OVERLAP = 20
 MIN_LEAKY_AMOUNT = 100
-_MONTHS = [
+MONTHS = [
     "january", "february", "march", "april", "may", "june",
     "july", "august", "september", "october", "november", "december",
 ]  # fmt: skip
-_MONTH_DAY = re.compile(rf"\b({'|'.join(m[:3] for m in _MONTHS)})[a-z]*\.? \d{{1,2}}\b")
+_MONTH_DAY = re.compile(rf"\b({'|'.join(m[:3] for m in MONTHS)})[a-z]*\.? \d{{1,2}}\b")
 _ISO_DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 
 
@@ -39,7 +39,7 @@ def _date_patterns(d: date) -> list[str]:
         f"{d.month:02}/{d.day:02}/{d.year}",
         f"{d.month}/{d.day}",
     ]
-    for month in {_MONTHS[d.month - 1], _MONTHS[d.month - 1][:3]}:
+    for month in {MONTHS[d.month - 1], MONTHS[d.month - 1][:3]}:
         forms += [f"{month} {d.day}", f"{d.day} {month}"]
     return [rf"\b{re.escape(form)}(?:st|nd|rd|th)?\b" for form in forms]
 
@@ -81,10 +81,10 @@ def check_grounding(reply: str, evidence: list[str]) -> GuardResult:
     """Every number in the reply must appear in the evidence (an ISO date also yields year, month, day)."""
     facts = _normalize("\n".join(evidence))
     allowed = {str(int(n)) for n in re.findall(r"\d+", facts)}
-    months = {m[:3] for m in _MONTHS if re.search(rf"\b{m[:3]}", facts)}
+    months = {m[:3] for m in MONTHS if re.search(rf"\b{m[:3]}", facts)}
     for year, month, day in _ISO_DATE.findall(facts):
         allowed |= {year, str(int(month)), str(int(day))}
-        months.add(_MONTHS[int(month) - 1][:3] if 1 <= int(month) <= 12 else "")
+        months.add(MONTHS[int(month) - 1][:3] if 1 <= int(month) <= 12 else "")
     text = _normalize(reply)
     ungrounded = sorted({str(int(n)) for n in re.findall(r"\d+", text)} - allowed, key=int)
     reasons = [f"ungrounded numbers: {', '.join(ungrounded)}"] if ungrounded else []

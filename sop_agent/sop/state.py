@@ -39,7 +39,6 @@ class Memory(BaseModel):
     status: str | None = None
     case_id: str | None = None
     documents_mentioned: list[str] = []
-    notes: list[str] = []
 
 
 class CaseSelection(BaseModel):
@@ -50,7 +49,6 @@ class CaseSelection(BaseModel):
 class Counters(BaseModel):
     off_topic_strikes: int = 0
     refusals: dict[str, int] = {}  # per phase
-    human_offered: bool = False
 
 
 class LedgerEntry(BaseModel):

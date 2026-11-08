@@ -5,13 +5,13 @@ from pydantic import BaseModel
 from sop_agent.config import Settings
 from sop_agent.data.normalize import mask_email
 from sop_agent.data.repository import Repository
-from sop_agent.llm.client import LLMClient, LLMUnavailableError
+from sop_agent.llm.client import LLMClient, LLMError, LLMUnavailableError
 from sop_agent.llm.prompts import extractor_system, phraser_system, phraser_user
 from sop_agent.sop.actions import Action, ActionKind
 from sop_agent.sop.case_facts import build_case_bundle
 from sop_agent.sop.case_resolver import Kind, resolve_case
-from sop_agent.sop.extraction import TurnExtraction, merge_into_state
-from sop_agent.sop.guards import check_grounding, check_pre_verification
+from sop_agent.sop.extraction import Emotion, TurnExtraction, merge_into_state
+from sop_agent.sop.guards import MONTHS, check_grounding, check_pre_verification
 from sop_agent.sop.policies import disclosure_allowed, should_escalate
 from sop_agent.sop.state import LedgerEntry, Memory, Phase, SessionState
 from sop_agent.sop.summary import build_email_summary
@@ -27,10 +27,9 @@ from sop_agent.sop.verification import (
 CONTEXT_MESSAGES = 6
 MISMATCHES_BEFORE_HUMAN = 3
 OFF_TOPIC_STRIKES_BEFORE_HUMAN = 3
-_MONTHS = [
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
-]  # fmt: skip
+TERMINAL_PHASES = (Phase.ENDED, Phase.HANDOFF)
+MASKED = "***"
+SKIPPED_GUARDS = {"pre_verification": "skipped", "grounding": "skipped"}
 
 
 class Trace(BaseModel):
@@ -54,6 +53,15 @@ def _action(kind: ActionKind, **facts) -> Action:
     return Action(kind=kind, facts=facts)
 
 
+def _masked_extraction(ex: TurnExtraction) -> dict:
+    """The extraction for the trace, identity values hidden (which fields were given stays visible)."""
+    dumped = ex.model_dump()
+    dumped["pii"] = {k: MASKED if v else None for k, v in dumped["pii"].items()}
+    for key in ("policy_number", "rep_name"):
+        dumped[key] = MASKED if dumped[key] else None
+    return dumped
+
+
 def _tone(ex: TurnExtraction) -> str:
     return "empathize" if ex.emotion.label != "neutral" else ""
 
@@ -65,16 +73,23 @@ class SOPEngine:
     # -- one turn: extract -> remember -> policy -> phase handler -> respond -> guard -> record -------------
 
     def handle_turn(self, state: SessionState, user_text: str) -> TurnResult:
-        state.transcript.append({"role": "user", "text": user_text})
         phase_before = state.phase
         fallback: list[str] = []
+        if phase_before in TERMINAL_PHASES:  # nothing to extract or remember: just say the session is over
+            state.transcript.append({"role": "user", "text": user_text})
+            actions = [_action(ActionKind.CLOSED)]
+            reply = render(actions, Emotion())
+            return self._record(
+                state, TurnExtraction(), phase_before, actions, reply, dict(SKIPPED_GUARDS), []
+            )
         try:
             ex = self.llm.extract(
-                system=self._extractor_prompt(state), messages=self._extractor_messages(state)
+                system=self._extractor_prompt(state), messages=self._extractor_messages(state, user_text)
             )
         except LLMUnavailableError:  # LLMAuthError is deliberately not caught: the API layer reports it
             ex = TurnExtraction()
             fallback.append("extractor unavailable")
+        state.transcript.append({"role": "user", "text": user_text})  # only once the turn can proceed
         merge_into_state(state, ex)
         if ex.refusal:
             refusals = state.counters.refusals
@@ -82,18 +97,21 @@ class SOPEngine:
 
         actions = self._decide(state, ex, user_text)
         offered = any(a.kind is ActionKind.OFFER_HUMAN for a in actions)
-        if should_escalate(state, ex) and not offered and state.phase not in (Phase.HANDOFF, Phase.ENDED):
-            actions.append(self._offer_human(state))
+        if should_escalate(state, ex) and not offered and state.phase not in TERMINAL_PHASES:
+            actions.append(_action(ActionKind.OFFER_HUMAN))
 
         template = render(actions, ex.emotion)
-        reply, guard = template, {"pre_verification": "skipped", "grounding": "skipped"}
+        reply, guard = template, dict(SKIPPED_GUARDS)
         if self.settings.responder_mode == "llm":
             reply, guard, reasons = self._phrase_and_guard(state, ex, actions, template)
             fallback += reasons
 
+        return self._record(state, ex, phase_before, actions, reply, guard, fallback)
+
+    def _record(self, state, ex, phase_before, actions, reply, guard, fallback) -> TurnResult:
         state.transcript.append({"role": "assistant", "text": reply})
         trace = Trace(
-            extraction=ex.model_dump(),
+            extraction=_masked_extraction(ex),
             phase_before=phase_before.value,
             phase_after=state.phase.value,
             actions=actions,
@@ -110,8 +128,8 @@ class SOPEngine:
         last_agent = next((m["text"] for m in reversed(state.transcript) if m["role"] == "assistant"), "")
         return extractor_system(state.phase.value, last_agent)
 
-    def _extractor_messages(self, state: SessionState) -> list[dict]:
-        tail = state.transcript[-CONTEXT_MESSAGES:]
+    def _extractor_messages(self, state: SessionState, user_text: str) -> list[dict]:
+        tail = [*state.transcript, {"role": "user", "text": user_text}][-CONTEXT_MESSAGES:]
         while tail[0]["role"] != "user":  # the API wants a conversation that starts with the caller
             tail = tail[1:]
         return [{"role": m["role"], "content": m["text"]} for m in tail]
@@ -135,7 +153,7 @@ class SOPEngine:
         guard = {"pre_verification": "skipped", "grounding": "ok"}
         try:
             reply = self.llm.phrase(system=system, messages=[{"role": "user", "content": content}])
-        except LLMUnavailableError:
+        except LLMError:  # unavailable or key rejected: state already changed, so answer from the template
             guard["grounding"] = "skipped"
             return template, guard, ["phraser unavailable"]
 
@@ -153,13 +171,15 @@ class SOPEngine:
     # -- policy + phase handlers (the only place phase changes) ---------------------------------------------
 
     def _decide(self, state: SessionState, ex: TurnExtraction, user_text: str) -> list[Action]:
-        if state.phase in (Phase.ENDED, Phase.HANDOFF):
-            return [_action(ActionKind.CLOSED)]
         if ex.wants_human:
             return self._handoff(state)
         closing = ex.done_with_case or ex.email_decision != "none"
-        if ex.scope == "off_topic" or (ex.scope == "smalltalk" and not closing):
-            return self._off_topic(state, ex)
+        off_topic = ex.scope == "off_topic"
+        lead: list[Action] = []  # decline or chat first, then carry on with whatever the caller also gave us
+        if off_topic or (ex.scope == "smalltalk" and not closing):
+            state.counters.off_topic_strikes += off_topic
+            lead = [_action(ActionKind.DECLINE_OFF_TOPIC if off_topic else ActionKind.SMALLTALK)]
+
         if state.phase is Phase.VERIFY_ID:
             actions = self._verify(state, ex)
         elif state.phase is Phase.RESOLVE_INTENT:
@@ -169,30 +189,14 @@ class SOPEngine:
         else:
             actions = self._post_process(state, ex)
         if state.phase is Phase.PROCESS_CASE:  # however we got here, the selected case is answered now
-            actions.append(self._answer(state, user_text))
-        return actions
-
-    def _off_topic(self, state: SessionState, ex: TurnExtraction) -> list[Action]:
-        """Decline (strike) or chat briefly (no strike), then restate the pending ask. Phase is unchanged."""
-        off_topic = ex.scope == "off_topic"
-        if off_topic:
-            state.counters.off_topic_strikes += 1
-        actions = [_action(ActionKind.DECLINE_OFF_TOPIC if off_topic else ActionKind.SMALLTALK)]
-        if state.phase is Phase.VERIFY_ID:
-            consent = state.consent.status
-            if consent == "pending":
-                actions.append(_action(ActionKind.CONSENT_PENDING))
-            elif consent == "timed_out":
-                actions.append(_action(ActionKind.CONSENT_TIMEOUT))
+            if lead and not actions and ex.intent == "none":  # chat only: don't repeat the same answer
+                actions.append(_action(ActionKind.ASK_INTENT))
             else:
-                actions.append(_action(ActionKind.ASK_IDENTITY, **self._identity_facts(state, ex)))
-        elif state.phase is Phase.POST_PROCESS:
-            actions.append(self._offer_email(state))
-        else:
-            actions.append(_action(ActionKind.ASK_INTENT))
-        if off_topic and state.counters.off_topic_strikes >= OFF_TOPIC_STRIKES_BEFORE_HUMAN:
-            actions.append(self._offer_human(state))
-        return actions
+                actions.append(self._answer(state, user_text))
+        offered = any(a.kind is ActionKind.OFFER_HUMAN for a in actions)
+        if off_topic and state.counters.off_topic_strikes >= OFF_TOPIC_STRIKES_BEFORE_HUMAN and not offered:
+            actions.append(_action(ActionKind.OFFER_HUMAN))
+        return lead + actions
 
     def _handoff(self, state: SessionState) -> list[Action]:
         note = (
@@ -201,10 +205,6 @@ class SOPEngine:
         )
         state.phase = Phase.HANDOFF
         return [_action(ActionKind.HANDOFF, note=note)]
-
-    def _offer_human(self, state: SessionState) -> Action:
-        state.counters.human_offered = True
-        return _action(ActionKind.OFFER_HUMAN)
 
     def _identity_facts(self, state: SessionState, ex: TurnExtraction, **extra) -> dict:
         """Verification metadata only: never records, never which field was wrong."""
@@ -224,7 +224,7 @@ class SOPEngine:
         if consent.status == "pending":
             return self._poll_consent(state)
         if consent.status == "timed_out":
-            return [_action(ActionKind.CONSENT_TIMEOUT), self._offer_human(state)]
+            return [_action(ActionKind.CONSENT_TIMEOUT), _action(ActionKind.OFFER_HUMAN)]
 
         is_rep = ident.caller_role == "representative"
         if is_rep and not ident.rep_name:  # a representative must say who they are before anything is checked
@@ -244,11 +244,14 @@ class SOPEngine:
 
         if result.status is Status.MISMATCH:
             ident.failed_attempts += 1
+            unknown_rep = "rep_name" in result.conflicting_fields
+            if unknown_rep:  # right policyholder details, but not a registered representative
+                ident.rep_name = None
             # Re-collect from scratch and never hint at what was wrong.
             ident.provided, ident.policy_number = {}, None
             actions = [_action(ActionKind.IDENTITY_MISMATCH, **self._identity_facts(state, ex))]
-            if ident.failed_attempts >= MISMATCHES_BEFORE_HUMAN:
-                actions.append(self._offer_human(state))
+            if unknown_rep or ident.failed_attempts >= MISMATCHES_BEFORE_HUMAN:
+                actions.append(_action(ActionKind.OFFER_HUMAN))
             return actions
 
         facts = self._identity_facts(state, ex, refusal=ex.refusal)
@@ -260,7 +263,7 @@ class SOPEngine:
         sequence = self.repo.consent_scenarios[consent.scenario]
         if consent.poll_index >= len(sequence):
             consent.status = "timed_out"
-            return [_action(ActionKind.CONSENT_TIMEOUT), self._offer_human(state)]
+            return [_action(ActionKind.CONSENT_TIMEOUT), _action(ActionKind.OFFER_HUMAN)]
         if sequence[consent.poll_index] == "approved":
             consent.status = "approved"
             return [_action(ActionKind.VERIFIED), *self._resolve(state)]
@@ -298,7 +301,10 @@ class SOPEngine:
         return _action(ActionKind.OFFER_EMAIL, masked_email=mask_email(email), reprompt=reprompt)
 
     def _switch_case(self, state: SessionState, ex: TurnExtraction) -> list[Action]:
-        """The caller moved on to another claim: forget the old case's hints and resolve afresh."""
+        """The caller moved on to another claim: resolve afresh from the new hints.
+
+        Hints the caller did not repeat are cleared (set to None), not kept from the old case.
+        """
         for field, value in ex.case_hints:
             setattr(state.memory, field, value)
         return self._resolve(state)
@@ -337,7 +343,7 @@ class SOPEngine:
             {
                 "case_id": c.case_id,
                 "case_type": c.case_type,
-                "month_name": _MONTHS[c.created_at.month - 1],
+                "month_name": MONTHS[c.created_at.month - 1].title(),
                 "year": c.created_at.year,
                 "status": c.status,
             }

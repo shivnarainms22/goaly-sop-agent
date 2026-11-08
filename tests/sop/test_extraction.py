@@ -66,6 +66,17 @@ def test_documents_deduplicated_and_representative_stored():
     )
 
 
+def test_representative_role_is_sticky_and_implied_by_rep_details():
+    s = SessionState.new()
+    merge_into_state(s, TurnExtraction(caller_role="representative"))
+    merge_into_state(s, TurnExtraction(caller_role="self"))
+    assert s.identity.caller_role == "representative"
+    for implied in (TurnExtraction(relationship="son"), TurnExtraction(rep_name="David Chen")):
+        t = SessionState.new()
+        merge_into_state(t, implied.model_copy(update={"caller_role": "self"}))
+        assert t.identity.caller_role == "representative"
+
+
 def test_invalid_enum_rejected():
     with pytest.raises(ValidationError):
         TurnExtraction(intent="make_me_rich")

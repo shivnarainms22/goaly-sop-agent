@@ -87,6 +87,7 @@ def test_switching_to_another_claim_reanswers(make_engine, P9_DEMO_EXTRACTION):
     eng, llm, state = verified_in_process_case(make_engine, P9_DEMO_EXTRACTION, [switch], mode="template")
     res = eng.handle_turn(state, "what about my auto claim?")
     assert kinds(res) == ["CASE_SELECTED", "ANSWER_CASE"] and state.case.selected_case_id == "CL-2102"
+    assert "auto claim CL-2102" in res.reply  # the switch is announced, never silent
 
 
 def test_wants_other_case_without_hints_asks_which(make_engine, P9_DEMO_EXTRACTION):

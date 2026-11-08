@@ -75,10 +75,13 @@ def merge_into_state(state: SessionState, ex: TurnExtraction) -> None:
             identity.provided[field] = value
     if ex.policy_number and ex.policy_number.strip():
         identity.policy_number = ex.policy_number.strip().upper()
-    if ex.caller_role != "unknown":
-        identity.caller_role = ex.caller_role
     identity.rep_name = ex.rep_name or identity.rep_name
     identity.relationship = ex.relationship or identity.relationship
+    # Representative is sticky and implied by any rep detail: a role switch must never skip consent.
+    if ex.caller_role == "representative" or identity.rep_name or identity.relationship:
+        identity.caller_role = "representative"
+    elif ex.caller_role == "self" and identity.caller_role != "representative":
+        identity.caller_role = "self"
 
     if ex.intent != "none" and not (ex.intent == "other" and memory.intent):
         memory.intent = ex.intent

@@ -2,7 +2,7 @@ from sop_agent.sop.extraction import TurnExtraction
 
 
 class FakeLLM:
-    """Scripted LLM for tests. A scripted reply that is an Exception is raised instead of returned."""
+    """Scripted LLM for tests. A scripted extraction or reply that is an Exception is raised."""
 
     def __init__(self, extractions: list[TurnExtraction], replies=()):
         self._extractions = list(extractions)
@@ -11,7 +11,12 @@ class FakeLLM:
 
     def extract(self, *, system: str, messages: list[dict]) -> TurnExtraction:
         self.calls.append({"role": "extract", "system": system, "messages": messages})
-        return self._extractions.pop(0) if self._extractions else TurnExtraction()
+        if not self._extractions:
+            return TurnExtraction()
+        extraction = self._extractions.pop(0)
+        if isinstance(extraction, Exception):
+            raise extraction
+        return extraction
 
     def phrase(self, *, system: str, messages: list[dict]) -> str:
         self.calls.append({"role": "phrase", "system": system, "messages": messages})

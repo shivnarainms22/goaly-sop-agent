@@ -115,7 +115,7 @@ def test_unknown_representative_is_rejected(make_engine):
     ex = TurnExtraction(pii=MARGARET, caller_role="representative", rep_name="Eve Smith")
     eng, llm, state = make_engine([ex], mode="template")
     res = eng.handle_turn(state, "I'm Eve Smith calling for Margaret Chen")
-    assert kinds(res) == ["IDENTITY_MISMATCH"] and state.consent.status == "not_required"
+    assert kinds(res) == ["IDENTITY_MISMATCH", "OFFER_HUMAN"] and state.consent.status == "not_required"
 
 
 def test_representative_without_own_name_is_asked_for_it(make_engine):
