@@ -3,16 +3,19 @@ import json
 from pydantic import BaseModel
 
 from sop_agent.config import Settings
+from sop_agent.data.normalize import mask_email
 from sop_agent.data.repository import Repository
 from sop_agent.llm.client import LLMClient, LLMUnavailableError
 from sop_agent.llm.prompts import extractor_system, phraser_system, phraser_user
 from sop_agent.sop.actions import Action, ActionKind
+from sop_agent.sop.case_facts import build_case_bundle
 from sop_agent.sop.case_resolver import Kind, resolve_case
 from sop_agent.sop.extraction import TurnExtraction, merge_into_state
 from sop_agent.sop.guards import check_grounding, check_pre_verification
 from sop_agent.sop.policies import disclosure_allowed, should_escalate
-from sop_agent.sop.state import Phase, SessionState
-from sop_agent.sop.templates import render
+from sop_agent.sop.state import LedgerEntry, Memory, Phase, SessionState
+from sop_agent.sop.summary import build_email_summary
+from sop_agent.sop.templates import answer_parts, render
 from sop_agent.sop.verification import (
     PII_FIELDS,
     REQUIRED_MATCHES,
@@ -23,6 +26,7 @@ from sop_agent.sop.verification import (
 
 CONTEXT_MESSAGES = 6
 MISMATCHES_BEFORE_HUMAN = 3
+OFF_TOPIC_STRIKES_BEFORE_HUMAN = 3
 _MONTHS = [
     "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December",
@@ -50,6 +54,10 @@ def _action(kind: ActionKind, **facts) -> Action:
     return Action(kind=kind, facts=facts)
 
 
+def _tone(ex: TurnExtraction) -> str:
+    return "empathize" if ex.emotion.label != "neutral" else ""
+
+
 class SOPEngine:
     def __init__(self, repo: Repository, llm: LLMClient, settings: Settings):
         self.repo, self.llm, self.settings = repo, llm, settings
@@ -72,7 +80,7 @@ class SOPEngine:
             refusals = state.counters.refusals
             refusals[state.phase.value] = refusals.get(state.phase.value, 0) + 1
 
-        actions = self._decide(state, ex)
+        actions = self._decide(state, ex, user_text)
         offered = any(a.kind is ActionKind.OFFER_HUMAN for a in actions)
         if should_escalate(state, ex) and not offered and state.phase not in (Phase.HANDOFF, Phase.ENDED):
             actions.append(self._offer_human(state))
@@ -111,7 +119,7 @@ class SOPEngine:
     # -- response + guards ----------------------------------------------------------------------------------
 
     def _phrase_and_guard(self, state, ex, actions, template):
-        tone = "empathize" if ex.emotion.label != "neutral" else ""
+        tone = _tone(ex)
         facts = {
             "actions": [{"action": a.kind.value, **a.facts} for a in actions],
             "caller_emotion": ex.emotion.label,
@@ -144,17 +152,47 @@ class SOPEngine:
 
     # -- policy + phase handlers (the only place phase changes) ---------------------------------------------
 
-    def _decide(self, state: SessionState, ex: TurnExtraction) -> list[Action]:
+    def _decide(self, state: SessionState, ex: TurnExtraction, user_text: str) -> list[Action]:
         if state.phase in (Phase.ENDED, Phase.HANDOFF):
             return [_action(ActionKind.CLOSED)]
         if ex.wants_human:
             return self._handoff(state)
-        # Task 11: off-topic handling goes here, before the phase handler.
+        closing = ex.done_with_case or ex.email_decision != "none"
+        if ex.scope == "off_topic" or (ex.scope == "smalltalk" and not closing):
+            return self._off_topic(state, ex)
         if state.phase is Phase.VERIFY_ID:
-            return self._verify(state, ex)
-        if state.phase is Phase.RESOLVE_INTENT:
-            return self._resolve(state)
-        return [_action(ActionKind.ASK_INTENT)]  # PROCESS_CASE / POST_PROCESS handlers arrive in Tasks 10-11
+            actions = self._verify(state, ex)
+        elif state.phase is Phase.RESOLVE_INTENT:
+            actions = self._resolve(state)
+        elif state.phase is Phase.PROCESS_CASE:
+            actions = self._process(state, ex)
+        else:
+            actions = self._post_process(state, ex)
+        if state.phase is Phase.PROCESS_CASE:  # however we got here, the selected case is answered now
+            actions.append(self._answer(state, user_text))
+        return actions
+
+    def _off_topic(self, state: SessionState, ex: TurnExtraction) -> list[Action]:
+        """Decline (strike) or chat briefly (no strike), then restate the pending ask. Phase is unchanged."""
+        off_topic = ex.scope == "off_topic"
+        if off_topic:
+            state.counters.off_topic_strikes += 1
+        actions = [_action(ActionKind.DECLINE_OFF_TOPIC if off_topic else ActionKind.SMALLTALK)]
+        if state.phase is Phase.VERIFY_ID:
+            consent = state.consent.status
+            if consent == "pending":
+                actions.append(_action(ActionKind.CONSENT_PENDING))
+            elif consent == "timed_out":
+                actions.append(_action(ActionKind.CONSENT_TIMEOUT))
+            else:
+                actions.append(_action(ActionKind.ASK_IDENTITY, **self._identity_facts(state, ex)))
+        elif state.phase is Phase.POST_PROCESS:
+            actions.append(self._offer_email(state))
+        else:
+            actions.append(_action(ActionKind.ASK_INTENT))
+        if off_topic and state.counters.off_topic_strikes >= OFF_TOPIC_STRIKES_BEFORE_HUMAN:
+            actions.append(self._offer_human(state))
+        return actions
 
     def _handoff(self, state: SessionState) -> list[Action]:
         note = (
@@ -177,7 +215,7 @@ class SOPEngine:
             "details_still_needed": max(0, REQUIRED_MATCHES - len(provided)),
             "failed_attempts": state.identity.failed_attempts,
             "caller_emotion": ex.emotion.label,
-            "tone": "empathize" if ex.emotion.label != "neutral" else "",
+            "tone": _tone(ex),
             **extra,
         }
 
@@ -228,9 +266,60 @@ class SOPEngine:
             return [_action(ActionKind.VERIFIED), *self._resolve(state)]
         return [_action(ActionKind.CONSENT_PENDING)]
 
+    def _process(self, state: SessionState, ex: TurnExtraction) -> list[Action]:
+        """PROCESS_CASE: finish, or switch case. No actions means the selected case is simply answered."""
+        if ex.done_with_case:
+            state.phase = Phase.POST_PROCESS
+            return [self._offer_email(state)]
+        claims = self.repo.claims_for(state.identity.verified_party_id)
+        elsewhere = resolve_case(Memory(**ex.case_hints.model_dump()), claims)
+        if ex.wants_other_case or (
+            elsewhere.kind is Kind.RESOLVED and elsewhere.case_id != state.case.selected_case_id
+        ):
+            return self._switch_case(state, ex)
+        return []
+
+    def _post_process(self, state: SessionState, ex: TurnExtraction) -> list[Action]:
+        if ex.email_decision == "send":
+            message = build_email_summary(state, self.repo)
+            state.email.outbox.append(message)
+            state.email.decision, state.phase = "send", Phase.ENDED
+            return [_action(ActionKind.EMAIL_SENT, masked_email=mask_email(message.to))]
+        if ex.email_decision == "skip":
+            state.email.decision, state.phase = "skip", Phase.ENDED
+            return [_action(ActionKind.EMAIL_SKIPPED)]
+        if ex.wants_other_case or any(ex.case_hints.model_dump().values()):
+            return self._switch_case(state, ex)
+        return [self._offer_email(state, reprompt=True)]
+
+    def _offer_email(self, state: SessionState, reprompt: bool = False) -> Action:
+        state.email.offered = True
+        email = self.repo.policyholder(state.identity.verified_party_id).email
+        return _action(ActionKind.OFFER_EMAIL, masked_email=mask_email(email), reprompt=reprompt)
+
+    def _switch_case(self, state: SessionState, ex: TurnExtraction) -> list[Action]:
+        """The caller moved on to another claim: forget the old case's hints and resolve afresh."""
+        for field, value in ex.case_hints:
+            setattr(state.memory, field, value)
+        return self._resolve(state)
+
+    def _answer(self, state: SessionState, user_text: str) -> Action:
+        claim = self.repo.claim_for_party(state.identity.verified_party_id, state.case.selected_case_id)
+        intent = state.memory.intent or "other"
+        bundle = build_case_bundle(self.repo, claim, intent, user_text, self.settings.today())
+        facts = {**bundle, "intent": intent}
+        shown_facts, next_steps = answer_parts(facts)
+        for kind, texts in (("fact", shown_facts), ("next_step", next_steps)):
+            for text in texts:
+                entry = LedgerEntry(kind=kind, text=text, source=claim.case_id)
+                if entry not in state.ledger:
+                    state.ledger.append(entry)
+        return _action(ActionKind.ANSWER_CASE, **facts)
+
     def _resolve(self, state: SessionState) -> list[Action]:
         """RESOLVE_INTENT: pick the caller's claim from remembered hints; never guess among several."""
         state.phase = Phase.RESOLVE_INTENT
+        state.case.selected_case_id = None
         party = state.identity.verified_party_id
         claims = self.repo.claims_for(party)
         resolution = resolve_case(state.memory, claims)

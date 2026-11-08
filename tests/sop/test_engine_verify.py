@@ -97,7 +97,7 @@ def test_representative_default_consent_flow(make_engine):
     assert state.phase.name == "VERIFY_ID" and state.case.selected_case_id is None
     assert not any(t in str(llm.calls) + first.reply for t in CLAIM_TOKENS)
     second = eng.handle_turn(state, "any news?")
-    assert state.consent.status == "approved" and kinds(second) == ["VERIFIED", "CASE_SELECTED"]
+    assert state.consent.status == "approved" and kinds(second)[:2] == ["VERIFIED", "CASE_SELECTED"]
     assert state.case.selected_case_id == "CL-2048" and state.phase.name == "PROCESS_CASE"
 
 

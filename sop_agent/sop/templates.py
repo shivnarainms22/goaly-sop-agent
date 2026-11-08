@@ -51,6 +51,60 @@ def _clarify_case(f: dict) -> str:
     return f"I found these claims: {claims}. Which one would you like to talk about?"
 
 
+def _first_sentence(text: str) -> str:
+    return text.split(". ")[0].rstrip(".") + "."
+
+
+def answer_parts(f: dict) -> tuple[list[str], list[str]]:
+    """What an ANSWER_CASE discloses for the caller's intent: (fact lines, next-step lines).
+    The engine also records these in the ledger, so the email summary says exactly what was said."""
+    c, intent = f["claim"], f["intent"]
+    cid, facts, steps = c["case_id"], [], []
+    if intent == "denial_question":
+        facts.append(f"Claim {cid} status: {c['status']}.")
+        if c.get("denial_reason"):
+            facts.append(f"Denial reason for {cid}: {c['denial_reason']}.")
+        if f["documents"]:
+            facts.append(f"Documents needed for {cid}: {', '.join(d['document'] for d in f['documents'])}.")
+        if "appeal_deadline" in c:
+            when = (
+                "has passed"
+                if c["appeal_deadline_passed"]
+                else f"is {c['days_until_appeal_deadline']} days away"
+            )
+            facts.append(f"The appeal deadline for {cid} ({c['appeal_deadline']}) {when}.")
+    elif intent == "status_inquiry":
+        facts.append(f"Claim {cid} status: {c['status']}. {c['summary']}.")
+        facts.append(
+            f"Expected reimbursement: ${c['expected_reimbursement_amount']}; net pay: ${c['net_pay']}."
+        )
+    elif intent == "document_submission":
+        steps = [
+            f"{d['document']}: {d['guidance']} If you can't get it: {_first_sentence(d['alternatives'])}"
+            for d in f["documents"]
+        ]
+    elif intent in ("other", "none"):
+        facts.append(f"Claim {cid}: {c['summary']} (status: {c['status']}).")
+    if not steps and intent not in ("denial_question", "status_inquiry"):
+        steps = f["followups"] or [f["fallback"]]
+    return facts, steps
+
+
+def _answer_case(f: dict) -> str:
+    facts, steps = answer_parts(f)
+    c = f["claim"]
+    if c.get("appeal_deadline_passed") and f["intent"] == "denial_question":
+        steps = ["I can transfer you to a human representative to review your options."]
+    closing = "Is there anything else about this claim, or anything else I can help with?"
+    return " ".join([*facts, *steps, closing])
+
+
+def _offer_email(f: dict) -> str:
+    if f.get("reprompt"):
+        return f"Should I email a summary to {f['masked_email']}? Please say yes or no."
+    return f"Would you like me to email a summary to {f['masked_email']}?"
+
+
 _TEMPLATES = {
     ActionKind.ASK_IDENTITY: _ask_identity,
     ActionKind.IDENTITY_MISMATCH: lambda f: (
@@ -71,9 +125,9 @@ _TEMPLATES = {
     ),
     ActionKind.CLARIFY_CASE: _clarify_case,
     ActionKind.ASK_INTENT: lambda f: "How can I help you with your claims today?",
-    ActionKind.ANSWER_CASE: lambda f: f"Here is what I have on claim {f['case_id']}: status {f['status']}.",
-    ActionKind.OFFER_EMAIL: lambda f: f"Would you like me to email a summary to {f['masked_email']}?",
-    ActionKind.EMAIL_SENT: lambda f: "Done, I've sent the summary. Take care!",
+    ActionKind.ANSWER_CASE: _answer_case,
+    ActionKind.OFFER_EMAIL: _offer_email,
+    ActionKind.EMAIL_SENT: lambda f: f"Done, I've sent the summary to {f['masked_email']}. Take care!",
     ActionKind.EMAIL_SKIPPED: lambda f: "No problem, I won't send an email. Take care!",
     ActionKind.DECLINE_OFF_TOPIC: lambda f: (
         "I'm sorry, I can only help with insurance claims and related questions."
