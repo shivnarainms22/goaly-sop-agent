@@ -9,7 +9,7 @@ def norm_name(raw: str | None) -> str | None:
 
 
 def norm_dob(raw: str | None) -> str | None:
-    """Any common date format -> ISO. Requires a 4-digit year and a complete date."""
+    """Any date -> ISO. Ambiguous numeric dates parse month-first (US); a misparse fails safely."""
     if not raw or not re.search(r"\d{4}", raw):
         return None
     try:
@@ -36,8 +36,11 @@ def norm_email(raw: str | None) -> str | None:
 
 
 def norm_last4(raw: str | None) -> str | None:
-    runs = re.findall(r"\d{4,}", raw or "")
-    return runs[-1][-4:] if runs else None
+    ssn = re.findall(r"(?<!\d)\d{3}-?\d{2}-?\d{4}(?!\d)", raw or "")
+    if ssn:
+        return ssn[-1][-4:]
+    runs = re.findall(r"(?<!\d)\d{4}(?!\d)", raw or "")
+    return runs[-1] if runs else None
 
 
 def mask_email(raw: str | None) -> str | None:

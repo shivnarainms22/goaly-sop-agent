@@ -69,3 +69,12 @@ def test_documents_deduplicated_and_representative_stored():
 def test_invalid_enum_rejected():
     with pytest.raises(ValidationError):
         TurnExtraction(intent="make_me_rich")
+
+
+def test_intent_other_does_not_overwrite_remembered_intent():
+    s = SessionState.new()
+    merge_into_state(s, TurnExtraction(intent="other"))
+    assert s.memory.intent == "other"
+    merge_into_state(s, TurnExtraction(intent="denial_question"))
+    merge_into_state(s, TurnExtraction(intent="other"))
+    assert s.memory.intent == "denial_question"

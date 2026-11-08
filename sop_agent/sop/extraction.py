@@ -80,7 +80,7 @@ def merge_into_state(state: SessionState, ex: TurnExtraction) -> None:
     identity.rep_name = ex.rep_name or identity.rep_name
     identity.relationship = ex.relationship or identity.relationship
 
-    if ex.intent != "none":
+    if ex.intent != "none" and not (ex.intent == "other" and memory.intent):
         memory.intent = ex.intent
     for field, value in ex.case_hints:
         if value is not None:

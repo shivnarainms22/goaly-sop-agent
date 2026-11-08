@@ -53,7 +53,15 @@ def test_norm_email():
 
 @pytest.mark.parametrize(
     "raw,exp",
-    [("4472", "4472"), ("ssn ends in 4472", "4472"), ("447", None), ("123-45-4472", "4472"), (None, None)],
+    [
+        ("4472", "4472"),
+        ("ssn ends in 4472", "4472"),
+        ("447", None),
+        ("123-45-4472", "4472"),
+        ("6505212836", None),
+        ("123454472", "4472"),
+        (None, None),
+    ],
 )
 def test_norm_last4(raw, exp):
     assert norm_last4(raw) == exp
