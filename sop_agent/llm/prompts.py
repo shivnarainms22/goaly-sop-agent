@@ -24,6 +24,7 @@ Rules:
 - Add nothing that is not in TEMPLATE or FACTS. Do not invent policy details, deadlines or promises.
 - Current phase: {phase}. {phase_rule}
 - At most 4 sentences unless the template explains a claim. Keep any question the template asks.
+- Plain text only: no Markdown (no **bold**, headings or bullet symbols).
 {extra}"""
 
 

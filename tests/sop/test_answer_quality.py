@@ -93,3 +93,10 @@ def test_verified_party_without_claims_is_told_and_offered_a_human(make_engine):
     assert kinds(res) == ["VERIFIED", "NO_CLAIMS", "OFFER_HUMAN"]
     assert "I don't see any claims on file for you." in res.reply
     assert state.phase.name == "RESOLVE_INTENT" and state.case.selected_case_id is None
+
+
+def test_markdown_from_the_phraser_is_stripped_to_plain_text(make_engine, P9_DEMO_EXTRACTION):
+    phrased = "## Next steps\n**How to send:** use the __member portal__ for claim CL-2048."
+    eng, llm, state = make_engine([P9_DEMO_EXTRACTION], replies=[phrased])
+    reply = eng.handle_turn(state, "demo").reply
+    assert reply == "Next steps\nHow to send: use the member portal for claim CL-2048."

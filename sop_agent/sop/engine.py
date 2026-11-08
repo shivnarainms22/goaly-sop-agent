@@ -1,4 +1,5 @@
 import json
+import re
 
 from pydantic import BaseModel
 
@@ -60,6 +61,11 @@ def _masked_extraction(ex: TurnExtraction) -> dict:
     for key in ("policy_number", "rep_name"):
         dumped[key] = MASKED if dumped[key] else None
     return dumped
+
+
+def _plain_text(text: str) -> str:
+    """The chat UI shows plain text: drop Markdown emphasis and heading markers the phraser may add."""
+    return re.sub(r"^#+\s*", "", re.sub(r"\*\*|__", "", text), flags=re.MULTILINE)
 
 
 def _tone(ex: TurnExtraction) -> str:
@@ -152,7 +158,9 @@ class SOPEngine:
         content = phraser_user(template, facts, state.transcript[-CONTEXT_MESSAGES:])
         guard = {"pre_verification": "skipped", "grounding": "ok"}
         try:
-            reply = self.llm.phrase(system=system, messages=[{"role": "user", "content": content}])
+            reply = _plain_text(
+                self.llm.phrase(system=system, messages=[{"role": "user", "content": content}])
+            )
         except LLMError:  # unavailable or key rejected: state already changed, so answer from the template
             guard["grounding"] = "skipped"
             return template, guard, ["phraser unavailable"]
