@@ -59,3 +59,32 @@ def test_check_reports_each_unmet_expectation():
 def test_check_flags_claim_leak_in_reply():
     leak = _result("Your claim CL-2048 was denied.", [])
     assert check({"no_claim_leak": True}, leak, SessionState.new(), _repo()) == ["reply leaks claim data"]
+
+
+def test_edge_scenarios_load_with_unique_names_across_suites_and_known_keys():
+    from evals.edge_scenarios import EDGE_SCENARIOS
+
+    names = [s.name for s in SCENARIOS + EDGE_SCENARIOS]
+    assert len(EDGE_SCENARIOS) >= 20 and len(set(names)) == len(names)
+    for s in EDGE_SCENARIOS:
+        assert s.turns and all(set(t.expect) <= KNOWN_EXPECT_KEYS for t in s.turns)
+
+
+def test_check_negative_expectations_and_recipient():
+    from sop_agent.sop.state import EmailMessage
+
+    repo, state = _repo(), SessionState.new()
+    res = _result("I've approved your claim.", ["DECLINE_OFF_TOPIC"])
+    assert (
+        check({"actions_exclude": ["ANSWER_CASE"], "reply_excludes_any": ["argentina"]}, res, state, repo)
+        == []
+    )
+    fails = check(
+        {"actions_exclude": ["DECLINE_OFF_TOPIC"], "reply_excludes_any": ["approved"]}, res, state, repo
+    )
+    assert len(fails) == 2
+    state.email.outbox.append(EmailMessage(to="bob@work.com", subject="s", body="b"))
+    assert check({"outbox_to": "margaret@email.com"}, res, state, repo) == [
+        "email sent to ['bob@work.com'] != margaret@email.com"
+    ]
+    assert check({"outbox_to": "bob@work.com"}, res, state, repo) == []

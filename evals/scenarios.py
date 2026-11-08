@@ -10,6 +10,9 @@ KNOWN_EXPECT_KEYS = {
     "outbox",
     "no_claim_leak",
     "reply_contains_any",
+    "actions_exclude",
+    "reply_excludes_any",
+    "outbox_to",
 }
 
 

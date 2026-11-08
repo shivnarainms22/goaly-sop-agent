@@ -1,8 +1,12 @@
-"""Live scenario evals (needs API key): `python -m evals.run [--only NAME] [--mode llm|template]`."""
+"""Live scenario evals (needs API key).
+
+`python -m evals.run [--suite core|edge|all] [--only NAME] [--mode llm|template] [--full]`
+"""
 
 import argparse
 import sys
 
+from evals.edge_scenarios import EDGE_SCENARIOS
 from evals.scenarios import SCENARIOS
 from sop_agent.config import Settings
 from sop_agent.data.repository import Repository
@@ -25,13 +29,23 @@ def check(expect: dict, result: TurnResult, state: SessionState, repo: Repositor
     missing = [k for k in expect.get("actions_include", []) if k not in kinds]
     if missing:
         failures.append(f"missing actions {missing} (got {kinds})")
+    forbidden = [k for k in expect.get("actions_exclude", []) if k in kinds]
+    if forbidden:
+        failures.append(f"forbidden actions {forbidden}")
     if "outbox" in expect and len(state.email.outbox) != expect["outbox"]:
         failures.append(f"outbox {len(state.email.outbox)} != {expect['outbox']}")
+    bad_to = [m.to for m in state.email.outbox if "outbox_to" in expect and m.to != expect["outbox_to"]]
+    if bad_to:
+        failures.append(f"email sent to {bad_to} != {expect['outbox_to']}")
     if expect.get("no_claim_leak") and not check_pre_verification(result.reply, repo).ok:
         failures.append("reply leaks claim data")
+    reply = result.reply.lower()
     needles = expect.get("reply_contains_any")
-    if needles and not any(n in result.reply.lower() for n in needles):
+    if needles and not any(n in reply for n in needles):
         failures.append(f"reply lacks any of {needles}")
+    present = [n for n in expect.get("reply_excludes_any", []) if n in reply]
+    if present:
+        failures.append(f"reply contains forbidden {present}")
     return failures
 
 
@@ -39,10 +53,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--only", help="run a single scenario by name")
     parser.add_argument("--mode", choices=["llm", "template"], default="llm")
+    parser.add_argument("--suite", choices=["core", "edge", "all"], default="core")
+    parser.add_argument("--full", action="store_true", help="print full replies (default: first 160 chars)")
     args = parser.parse_args()
-    scenarios = [s for s in SCENARIOS if args.only in (None, s.name)]
+    pool = {"core": SCENARIOS, "edge": EDGE_SCENARIOS, "all": SCENARIOS + EDGE_SCENARIOS}[args.suite]
+    scenarios = [s for s in pool if args.only in (None, s.name)]
     if not scenarios:
-        print(f"no scenario named {args.only!r}; known: {[s.name for s in SCENARIOS]}", file=sys.stderr)
+        print(f"no scenario named {args.only!r}; known: {[s.name for s in pool]}", file=sys.stderr)
         return 2
     settings = Settings(responder_mode=args.mode)
     if not settings.anthropic_api_key:
@@ -62,7 +79,7 @@ def main() -> int:
             actions = ",".join(a.kind.value for a in result.trace.actions)
             verdict = "ok" if not problems else "FAIL " + "; ".join(problems)
             print(f"{i}. {state.phase.value} | {actions} | {verdict}")
-            print(f"   > {result.reply[:160]!r}")
+            print(f"   > {result.reply if args.full else result.reply[:160]!r}")
         table.append((sc.name, failed))
     print("\n" + "\n".join(f"{'PASS' if not f else 'FAIL'}  {n}" for n, f in table))
     return 1 if any(f for _, f in table) else 0

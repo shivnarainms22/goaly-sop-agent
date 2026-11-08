@@ -68,12 +68,11 @@ def answer_parts(f: dict) -> tuple[list[str], list[str]]:
         if f["documents"]:
             facts.append(f"Documents needed for {cid}: {', '.join(d['document'] for d in f['documents'])}.")
         if "appeal_deadline" in c:
-            when = (
-                "has passed"
-                if c["appeal_deadline_passed"]
-                else f"is {c['days_until_appeal_deadline']} days away"
-            )
-            facts.append(f"The appeal deadline for {cid} ({c['appeal_deadline']}) {when}.")
+            facts.append(_deadline(c))
+    elif intent == "appeal_question":
+        facts.append(
+            _deadline(c) if "appeal_deadline" in c else f"Claim {cid} has no appeal deadline on file."
+        )
     elif intent == "document_submission":
         steps = [f"How to send: {f['submission']}"] if f["documents"] else []
         steps += [
@@ -87,11 +86,16 @@ def answer_parts(f: dict) -> tuple[list[str], list[str]]:
             f"Expected reimbursement: ${c['expected_reimbursement_amount']}; net pay: ${c['net_pay']}; "
             f"allowed max amount: ${c['allowed_max_amount']}."
         )
-    if not steps and intent not in ("denial_question", "status_inquiry"):
+    if not steps and intent not in ("denial_question", "appeal_question", "status_inquiry"):
         steps = _next_step(f)
     said = f.get("already_said", [])
     fresh = [t for t in facts if t not in said]
     return (fresh if fresh or steps else facts), steps
+
+
+def _deadline(c: dict) -> str:
+    when = "has passed" if c["appeal_deadline_passed"] else f"is {c['days_until_appeal_deadline']} days away"
+    return f"The appeal deadline for {c['case_id']} ({c['appeal_deadline']}) {when}."
 
 
 def _next_step(f: dict) -> list[str]:
@@ -109,7 +113,7 @@ def _next_step(f: dict) -> list[str]:
 def _answer_case(f: dict) -> str:
     facts, steps = answer_parts(f)
     c = f["claim"]
-    if c.get("appeal_deadline_passed") and f["intent"] == "denial_question":
+    if c.get("appeal_deadline_passed") and f["intent"] in ("denial_question", "appeal_question"):
         steps = ["I can transfer you to a human representative to review your options."]
     closing = "Is there anything else about this claim, or anything else I can help with?"
     return " ".join([*facts, *steps, closing])

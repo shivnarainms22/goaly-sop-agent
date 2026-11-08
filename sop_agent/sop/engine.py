@@ -277,24 +277,29 @@ class SOPEngine:
         if ex.done_with_case:
             state.phase = Phase.POST_PROCESS
             return [self._offer_email(state)]
-        claims = self.repo.claims_for(state.identity.verified_party_id)
-        elsewhere = resolve_case(Memory(**ex.case_hints.model_dump()), claims)
-        if ex.wants_other_case or (
-            elsewhere.kind is Kind.RESOLVED and elsewhere.case_id != state.case.selected_case_id
-        ):
+        if self._points_elsewhere(state, ex):
             return self._switch_case(state, ex)
         return []
 
+    def _points_elsewhere(self, state: SessionState, ex: TurnExtraction) -> bool:
+        """The caller is asking about a different claim than the selected one."""
+        claims = self.repo.claims_for(state.identity.verified_party_id)
+        other = resolve_case(Memory(**ex.case_hints.model_dump()), claims)
+        return ex.wants_other_case or (
+            other.kind is Kind.RESOLVED and other.case_id != state.case.selected_case_id
+        )
+
     def _post_process(self, state: SessionState, ex: TurnExtraction) -> list[Action]:
-        if ex.wants_other_case or any(
-            ex.case_hints.model_dump().values()
-        ):  # a new question never ends the call
+        if self._points_elsewhere(state, ex):  # a new question never ends the call
             return self._switch_case(state, ex)
         if ex.email_decision == "send":
             return self._send_email(state)
         if ex.email_decision == "skip":
             state.email.decision, state.phase = "skip", Phase.ENDED
             return [_action(ActionKind.EMAIL_SKIPPED)]
+        if ex.intent not in ("none", "other"):  # one more question about this claim: answer it
+            state.phase = Phase.PROCESS_CASE
+            return []
         return [self._offer_email(state, reprompt=True)]
 
     def _send_email(self, state: SessionState) -> list[Action]:

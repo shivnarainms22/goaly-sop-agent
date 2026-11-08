@@ -7,6 +7,7 @@ from sop_agent.sop.state import SessionState
 
 Intent = Literal[
     "denial_question",
+    "appeal_question",
     "status_inquiry",
     "document_submission",
     "next_steps",
