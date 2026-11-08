@@ -156,7 +156,7 @@ function renderInspector(state, trace) {
     section("Counters",
       row("off-topic strikes", badge(String(state.counters.off_topic_strikes), state.counters.off_topic_strikes ? "warn" : "")),
       row("refusals", ...list(Object.entries(state.counters.refusals).map(([p, n]) => p + ": " + n), "none")),
-      row("human offered", badge(String(state.counters.human_offered)))),
+      row("failed ID attempts", badge(String(state.identity.failed_attempts ?? 0)))),
   ];
   if (trace) {
     parts.push(section("Last turn",
