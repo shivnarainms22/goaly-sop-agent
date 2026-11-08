@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {"name": "goaly-sop", "runtimeExecutable": "uv", "runtimeArgs": ["run", "uvicorn", "sop_agent.api.app:app", "--port", "8000"], "port": 8000}
+  ]
+}
