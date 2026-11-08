@@ -67,8 +67,7 @@ EDGE_SCENARIOS = [
                 {
                     "no_claim_leak": True,
                     "selected_case": None,
-                    "actions_include": ["OFFER_HUMAN"],
-                    "reply_contains_any": ["don't see any claims", "no claims", "do not see any claims"],
+                    "actions_include": ["NO_CLAIMS", "OFFER_HUMAN"],
                 },
             ),
         ],
