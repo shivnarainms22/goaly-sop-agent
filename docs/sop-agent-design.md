@@ -75,7 +75,9 @@ and memory capture run in **every** phase and never change phase by themselves.
    `documents_mentioned`, `scope` ∈ {in_scope, off_topic, smalltalk}, `emotion{label ∈ neutral|frustrated|
    anxious|angry|confused, intensity 0–3}`, `refusal` (declines to give requested info), `wants_human`,
    `email_decision` ∈ {send, skip, none}, `done_with_case`, `wants_other_case`.
-   The extractor sees the transcript tail + current phase + what the agent last asked — never claim data.
+   The extractor sees the transcript tail + current phase + what the agent last asked. Before disclosure is allowed
+   the transcript cannot contain claim data (pre-verification guard), so neither LLM ever sees claim data before then;
+   after disclosure, the tail may include already-disclosed facts, which is harmless.
    Invalid output → one retry → empty extraction (turn still answered safely). Validated with Pydantic.
 2. **Remember** — merge PII and hints into state regardless of phase.
 3. **Policy layer** (deterministic, ordered): `wants_human` → HANDOFF · off-topic → strike, decline
