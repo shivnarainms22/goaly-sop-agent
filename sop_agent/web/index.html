@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SOP Claims Agent</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #fff; --text: #1c2330; --muted: #667085; --line: #e2e5ea;
+    --accent: #2457d6; --accent-text: #fff; --user: #2457d6; --user-text: #fff; --bot: #eef1f6;
+    --ok: #137a3f; --ok-bg: #e3f5ea; --warn: #9a5b00; --warn-bg: #fff1d6; --bad: #b42318; --bad-bg: #fde8e6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #11151c; --panel: #1a2029; --text: #e6e9ef; --muted: #9aa4b5; --line: #2b3340;
+      --accent: #5b8cff; --accent-text: #0b1020; --user: #3a63d8; --user-text: #fff; --bot: #252d3a;
+      --ok: #6fd59a; --ok-bg: #153524; --warn: #f0b955; --warn-bg: #3b2d12; --bad: #ff8a80; --bad-bg: #40201d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0 8px 0 0; }
+  header label { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+  input, select, button { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled, input:disabled { opacity: .55; cursor: not-allowed; }
+  main { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; padding: 16px; height: calc(100vh - 56px); min-height: 480px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; min-height: 0; }
+  #chat { padding: 0; }
+  #log { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+  .bubble { max-width: 85%; padding: 8px 12px; border-radius: 12px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bot); }
+  .bubble.user { align-self: flex-end; background: var(--user); color: var(--user-text); }
+  .bubble.typing { color: var(--muted); font-style: italic; }
+  #banner { margin: 0 14px; padding: 8px 12px; border-radius: 6px; background: var(--bad-bg); color: var(--bad); }
+  #chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 14px 0; }
+  #chips button { font-size: 12px; border-radius: 999px; color: var(--muted); }
+  #composer { display: flex; gap: 8px; padding: 12px 14px; }
+  #composer input { flex: 1; min-width: 0; }
+  #inspector { padding: 14px; overflow-y: auto; gap: 14px; }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 6px; }
+  .stepper { display: flex; flex-wrap: wrap; gap: 6px; }
+  .step, .badge { padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .step.done { color: var(--ok); background: var(--ok-bg); border-color: transparent; }
+  .step.current { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  .badge.ok { color: var(--ok); background: var(--ok-bg); border-color: transparent; }
+  .badge.warn { color: var(--warn); background: var(--warn-bg); border-color: transparent; }
+  .badge.bad { color: var(--bad); background: var(--bad-bg); border-color: transparent; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 3px 0; }
+  .k { color: var(--muted); min-width: 110px; }
+  .none { color: var(--muted); font-style: italic; }
+  pre { margin: 4px 0; padding: 8px; background: var(--bot); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.4 ui-monospace, Consolas, monospace; }
+  details summary { cursor: pointer; }
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; height: auto; }
+    #chat { height: 70vh; }
+    .bubble { max-width: 92%; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>SOP Claims Agent</h1>
+  <label>API key <input id="key" type="password" placeholder="sk-ant-..." autocomplete="off" size="22"></label>
+  <label>Consent scenario
+    <select id="scenario"><option value="default">default (approves)</option><option value="timeout">timeout</option></select>
+  </label>
+  <button id="new" class="primary" type="button">New session</button>
+  <span id="mode" class="badge"></span>
+</header>
+<main>
+  <section id="chat" class="card" aria-label="Chat">
+    <div id="log" aria-live="polite"></div>
+    <div id="banner" hidden role="alert"></div>
+    <div id="chips"></div>
+    <form id="composer" autocomplete="off">
+      <input id="text" type="text" placeholder="Type a message and press Enter" maxlength="2000">
+      <button id="send" class="primary" type="submit">Send</button>
+    </form>
+  </section>
+  <section id="inspector" class="card" aria-label="SOP inspector"></section>
+</main>
+<script>
+"use strict";
+const PHASES = ["VERIFY_ID", "RESOLVE_INTENT", "PROCESS_CASE", "POST_PROCESS"];
+const CHIPS = [
+  ["Demo line", "I'm the policyholder. My name is Margaret Chen, policy POL-9921. I'm calling about my denied healthcare claim from January. DOB is 1985-03-15, SSN last four is 4472."],
+  ["Frustrated", "I already told you who I am. This is ridiculous. Just tell me why my claim was denied."],
+  ["Off-topic", "what is RL?"],
+  ["Representative", "Hi, I'm David Chen calling for my mother Margaret Chen."],
+];
+const $ = (id) => document.getElementById(id);
+let sessionId = null, busy = false;
+
+function el(tag, cls, text, ...kids) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = text;
+  kids.forEach((k) => n.append(k));
+  return n;
+}
+const badge = (text, kind) => el("span", "badge " + (kind || ""), text);
+const row = (key, ...kids) => el("div", "row", null, el("span", "k", key), ...kids);
+const none = (text) => el("span", "none", text);
+const list = (items, empty) => (items.length ? items.map((t) => badge(t)) : [none(empty)]);
+const section = (title, ...kids) => el("div", null, null, el("h2", null, title), ...kids);
+const pretty = (obj) => el("pre", null, JSON.stringify(obj, null, 2));
+
+function addBubble(role, text) {
+  const b = el("div", "bubble " + role, text);
+  $("log").append(b);
+  $("log").scrollTop = $("log").scrollHeight;
+  return b;
+}
+function showError(msg) { $("banner").hidden = !msg; $("banner").textContent = msg || ""; }
+function setBusy(v) { busy = v; $("text").disabled = $("send").disabled = v; if (!v) $("text").focus(); }
+
+function summarizeExtraction(ex) {
+  const items = [];
+  const given = Object.entries(ex.pii || {}).filter(([, v]) => v).map(([k]) => k);
+  if (given.length) items.push(["pii fields", given.join(", ")]);
+  if (ex.policy_number) items.push(["policy number", "provided"]);
+  if (ex.caller_role !== "unknown") items.push(["caller role", ex.caller_role]);
+  if (ex.intent !== "none") items.push(["intent", ex.intent]);
+  const hints = Object.entries(ex.case_hints || {}).filter(([, v]) => v !== null).map(([k, v]) => k + "=" + v);
+  if (hints.length) items.push(["case hints", hints.join(", ")]);
+  items.push(["scope", ex.scope]);
+  if (ex.emotion.label !== "neutral") items.push(["emotion", ex.emotion.label + " (" + ex.emotion.intensity + ")"]);
+  for (const flag of ["refusal", "wants_human", "done_with_case", "wants_other_case"]) if (ex[flag]) items.push([flag, "yes"]);
+  if (ex.email_decision !== "none") items.push(["email decision", ex.email_decision]);
+  return items;
+}
+
+function renderInspector(state, trace) {
+  const box = $("inspector");
+  const idn = state.identity, consent = state.consent, mem = state.memory, cs = state.case;
+  const idx = PHASES.indexOf(state.phase);
+  const stepper = el("div", "stepper", null, ...PHASES.map((p, i) =>
+    el("span", "step" + (p === state.phase ? " current" : i < idx || ["ENDED", "HANDOFF"].includes(state.phase) ? " done" : ""), p)));
+  if (["ENDED", "HANDOFF"].includes(state.phase)) stepper.append(badge(state.phase, state.phase === "ENDED" ? "ok" : "warn"));
+
+  const hints = Object.entries(mem).filter(([, v]) => v !== null && !(Array.isArray(v) && !v.length));
+  const parts = [
+    section("Phase", stepper),
+    section("Identity",
+      row("fields provided", ...list(idn.provided_fields.concat(idn.policy_number_provided ? ["policy_number"] : []), "none yet")),
+      row("caller role", badge(idn.caller_role)),
+      row("verified", idn.verified ? badge("verified", "ok") : badge("not verified", "warn")),
+      row("failed attempts", badge(String(idn.failed_attempts), idn.failed_attempts ? "bad" : ""))),
+    section("Consent", row("status", badge(consent.status, consent.status === "approved" ? "ok" : consent.status === "timed_out" ? "bad" : ""),
+      badge(consent.scenario))),
+    section("Remembered hints", ...(hints.length ? hints.map(([k, v]) => row(k, el("span", null, String(v)))) : [none("nothing yet")])),
+    section("Case", row("selected", cs.selected_case_id ? badge(cs.selected_case_id, "ok") : none("none")),
+      row("candidates", ...list(cs.candidate_case_ids, "none"))),
+    section("Counters",
+      row("off-topic strikes", badge(String(state.counters.off_topic_strikes), state.counters.off_topic_strikes ? "warn" : "")),
+      row("refusals", ...list(Object.entries(state.counters.refusals).map(([p, n]) => p + ": " + n), "none")),
+      row("human offered", badge(String(state.counters.human_offered)))),
+  ];
+  if (trace) {
+    parts.push(section("Last turn",
+      row("phase", el("span", null, trace.phase_before + " → " + trace.phase_after), badge(trace.mode)),
+      ...summarizeExtraction(trace.extraction).map(([k, v]) => row(k, el("span", null, v))),
+      row("actions", ...list(trace.actions.map((a) => a.kind), "none")),
+      ...trace.actions.filter((a) => Object.keys(a.facts).length).map((a) =>
+        el("details", null, null, el("summary", null, a.kind + " facts"), pretty(a.facts))),
+      row("guards", ...Object.entries(trace.guard).map(([k, v]) => badge(k + ": " + v, v === "fallback" ? "bad" : v === "ok" ? "ok" : ""))),
+      row("fallback reasons", ...list(trace.fallback_reasons, "none"))));
+  }
+  const outbox = state.email.outbox;
+  parts.push(section("Email outbox (simulated)",
+    row("offered / decision", badge(String(state.email.offered)), badge(state.email.decision)),
+    ...(outbox.length ? outbox.map((m) => el("div", null, null,
+      row("to", el("span", null, m.to)), row("subject", el("span", null, m.subject)), el("pre", null, m.body))) : [none("empty")])));
+  box.replaceChildren(...parts);
+}
+
+async function api(path, options = {}) {
+  const headers = { "Content-Type": "application/json" };
+  if ($("key").value.trim()) headers["X-Anthropic-Key"] = $("key").value.trim();
+  const res = await fetch(path, { ...options, headers });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof body.detail === "string" ? body.detail : "Request failed (" + res.status + ")");
+  return body;
+}
+
+async function newSession() {
+  showError("");
+  try {
+    const body = await api("/api/sessions", { method: "POST", body: JSON.stringify({ consent_scenario: $("scenario").value }) });
+    sessionId = body.session_id;
+    $("log").replaceChildren();
+    renderInspector(body.state, null);
+    addBubble("bot", "Hello, thanks for calling claims support. How can I help you today?");
+  } catch (e) { showError(e.message); }
+}
+
+async function send(text) {
+  text = text.trim();
+  if (!text || busy || !sessionId) return;
+  showError("");
+  addBubble("user", text);
+  $("text").value = "";
+  setBusy(true);
+  const typing = addBubble("bot typing", "typing…");
+  try {
+    const body = await api("/api/sessions/" + sessionId + "/messages", { method: "POST", body: JSON.stringify({ text }) });
+    typing.remove();
+    addBubble("bot", body.reply);
+    renderInspector(body.state, body.trace);
+  } catch (e) {
+    typing.remove();
+    showError(e.message);
+  } finally { setBusy(false); }
+}
+
+$("composer").addEventListener("submit", (e) => { e.preventDefault(); send($("text").value); });
+$("new").addEventListener("click", newSession);
+$("scenario").addEventListener("change", newSession);
+$("key").value = sessionStorage.getItem("anthropicKey") || "";
+$("key").addEventListener("input", () => sessionStorage.setItem("anthropicKey", $("key").value));
+CHIPS.forEach(([label, text]) => {
+  const b = el("button", null, label);
+  b.type = "button";
+  b.title = text;
+  b.addEventListener("click", () => send(text));
+  $("chips").append(b);
+});
+api("/api/config").then((c) => {
+  $("mode").textContent = "responder: " + c.responder_mode;
+  if (c.server_key_configured) $("key").placeholder = "optional (server key set)";
+}).catch(() => {});
+newSession();
+</script>
+</body>
+</html>
