@@ -9,7 +9,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="SOP_", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="SOP_", extra="ignore", env_file=REPO_ROOT / ".env", env_ignore_empty=True
+    )
 
     extractor_model: str = "claude-haiku-5-5"
     responder_model: str = "claude-sonnet-5-5"
