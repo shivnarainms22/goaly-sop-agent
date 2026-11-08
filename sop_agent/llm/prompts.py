@@ -8,7 +8,8 @@ Rules:
 - pii: full_name, dob, phone, email, id_last4 (last 4 digits of SSN or national ID). Unset if not given.
 - caller_role: "self" if the policyholder, "representative" if acting for someone else
   (then rep_name = the caller's own name, pii = the policyholder's details).
-- intent and case_hints (case_type, month 1-12, year, status such as denied/approved, case_id).
+- intent and case_hints (case_type healthcare/dental/auto — map medical→healthcare, car→auto, teeth→dental;
+  month 1-12, year, status denied/closed/open, case_id).
 - scope: "off_topic" for anything unrelated to insurance claims, policy, documents or payments;
   "smalltalk" for greetings and thanks.
 - emotion: label and intensity 0-3. refusal=true if they decline to provide what was asked.

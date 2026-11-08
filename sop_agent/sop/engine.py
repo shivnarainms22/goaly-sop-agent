@@ -286,13 +286,15 @@ class SOPEngine:
         return []
 
     def _post_process(self, state: SessionState, ex: TurnExtraction) -> list[Action]:
+        if ex.wants_other_case or any(
+            ex.case_hints.model_dump().values()
+        ):  # a new question never ends the call
+            return self._switch_case(state, ex)
         if ex.email_decision == "send":
             return self._send_email(state)
         if ex.email_decision == "skip":
             state.email.decision, state.phase = "skip", Phase.ENDED
             return [_action(ActionKind.EMAIL_SKIPPED)]
-        if ex.wants_other_case or any(ex.case_hints.model_dump().values()):
-            return self._switch_case(state, ex)
         return [self._offer_email(state, reprompt=True)]
 
     def _send_email(self, state: SessionState) -> list[Action]:

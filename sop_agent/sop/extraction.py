@@ -27,10 +27,11 @@ class PII(BaseModel):
 
 
 class CaseHints(BaseModel):
-    case_type: str | None = None
+    # Constrained to the fixture vocabulary so the extractor maps "car"→auto, "medical"→healthcare, etc.
+    case_type: Literal["healthcare", "dental", "auto"] | None = None
     month: int | None = Field(default=None, ge=1, le=12)
     year: int | None = None
-    status: str | None = None
+    status: Literal["denied", "closed", "open"] | None = None
     case_id: str | None = None
 
 
