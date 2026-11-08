@@ -35,7 +35,7 @@ def _ask_identity(f: dict) -> str:
         )
     else:
         ask = f"Thank you. I still need {f['details_still_needed']} more of: {_fields(still)}."
-    parts = [_WHY_PROTECTED] if f.get("refusal") else []
+    parts = [_WHY_PROTECTED] if f.get("explain") else []
     if ask:
         parts.append(ask)
     if f.get("ask_rep_name"):
@@ -60,10 +60,11 @@ def answer_parts(f: dict) -> tuple[list[str], list[str]]:
     The engine also records these in the ledger, so the email summary says exactly what was said."""
     c, intent = f["claim"], f["intent"]
     cid, facts, steps = c["case_id"], [], []
-    if intent == "denial_question":
+    if intent == "denial_question" and not c.get("denial_reason"):
+        facts.append(f"Claim {cid} is not denied; its status is {c['status']}. {c['summary']}.")
+    elif intent == "denial_question":
         facts.append(f"Claim {cid} status: {c['status']}.")
-        if c.get("denial_reason"):
-            facts.append(f"Denial reason for {cid}: {c['denial_reason']}.")
+        facts.append(f"Denial reason for {cid}: {c['denial_reason']}.")
         if f["documents"]:
             facts.append(f"Documents needed for {cid}: {', '.join(d['document'] for d in f['documents'])}.")
         if "appeal_deadline" in c:
@@ -73,22 +74,36 @@ def answer_parts(f: dict) -> tuple[list[str], list[str]]:
                 else f"is {c['days_until_appeal_deadline']} days away"
             )
             facts.append(f"The appeal deadline for {cid} ({c['appeal_deadline']}) {when}.")
-    elif intent == "status_inquiry":
-        facts.append(f"Claim {cid} status: {c['status']}. {c['summary']}.")
-        facts.append(
-            f"Expected reimbursement: ${c['expected_reimbursement_amount']}; net pay: ${c['net_pay']}."
-        )
     elif intent == "document_submission":
         steps = [f"How to send: {f['submission']}"] if f["documents"] else []
         steps += [
             f"{d['document']}: {d['guidance']} If you can't get it: {_first_sentence(d['alternatives'])}"
             for d in f["documents"]
         ]
-    elif intent in ("other", "none"):
-        facts.append(f"Claim {cid}: {c['summary']} (status: {c['status']}).")
+    else:
+        facts.append(f"Claim {cid} status: {c['status']}. {c['summary']}.")
+    if intent in ("status_inquiry", "payment_question"):
+        facts.append(
+            f"Expected reimbursement: ${c['expected_reimbursement_amount']}; net pay: ${c['net_pay']}; "
+            f"allowed max amount: ${c['allowed_max_amount']}."
+        )
     if not steps and intent not in ("denial_question", "status_inquiry"):
-        steps = f["followups"] or [f["fallback"]]
-    return facts, steps
+        steps = _next_step(f)
+    said = f.get("already_said", [])
+    fresh = [t for t in facts if t not in said]
+    return (fresh if fresh or steps else facts), steps
+
+
+def _next_step(f: dict) -> list[str]:
+    """Guideline follow-ups are all about missing material, so they apply only if documents are needed."""
+    c = f["claim"]
+    if c.get("documents_needed"):
+        return f["followups"] or [f["fallback"]]
+    if c["status"] == "open":
+        return ["It's still being processed, and nothing is needed from you right now."]
+    if c["status"] == "closed":
+        return ["This claim is closed, so no further action is needed."]
+    return ["I can transfer you to a human representative for more detail."]
 
 
 def _answer_case(f: dict) -> str:
@@ -108,14 +123,18 @@ def _offer_email(f: dict) -> str:
 
 _TEMPLATES = {
     ActionKind.ASK_IDENTITY: _ask_identity,
-    ActionKind.IDENTITY_MISMATCH: lambda f: (
-        "I couldn't verify your identity with the details provided. "
-        f"Please double-check and share {f['matched_count_needed']} of: "
-        f"{_fields(f['fields_still_accepted'])}."
+    ActionKind.IDENTITY_MISMATCH: lambda f: " ".join(
+        [
+            *([_WHY_PROTECTED] if f.get("explain") else []),
+            "I couldn't verify your identity with the details provided. "
+            f"Please double-check and share {f['matched_count_needed']} of: "
+            f"{_fields(f['fields_still_accepted'])}.",
+        ]
     ),
     ActionKind.VERIFIED: lambda f: "Thank you, you're verified.",
     ActionKind.CONSENT_PENDING: lambda f: (
-        "Thank you. As you're calling on behalf of the policyholder, I've sent them a consent request. "
+        "Thank you. As you're calling on behalf of the policyholder, I've sent them a consent request; "
+        "this protects their privacy, as claim details are only shared with people they authorize. "
         "Send me a message in a moment and I'll check whether they've approved."
     ),
     ActionKind.CONSENT_TIMEOUT: lambda f: (
@@ -125,6 +144,7 @@ _TEMPLATES = {
         f"I've pulled up your {f['case_type']} claim {f['case_id']} (status: {f['status']})."
     ),
     ActionKind.CLARIFY_CASE: _clarify_case,
+    ActionKind.NO_CLAIMS: lambda f: "I don't see any claims on file for you.",
     ActionKind.ASK_INTENT: lambda f: "How can I help you with your claims today?",
     ActionKind.ANSWER_CASE: _answer_case,
     ActionKind.OFFER_EMAIL: _offer_email,

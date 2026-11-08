@@ -183,7 +183,7 @@ class SOPEngine:
         if state.phase is Phase.VERIFY_ID:
             actions = self._verify(state, ex)
         elif state.phase is Phase.RESOLVE_INTENT:
-            actions = self._resolve(state)
+            actions = self._send_email(state) if ex.email_decision == "send" else self._resolve(state)
         elif state.phase is Phase.PROCESS_CASE:
             actions = self._process(state, ex)
         else:
@@ -216,6 +216,7 @@ class SOPEngine:
             "failed_attempts": state.identity.failed_attempts,
             "caller_emotion": ex.emotion.label,
             "tone": _tone(ex),
+            "explain": ex.refusal or ex.emotion.strong or ex.asks_why,
             **extra,
         }
 
@@ -228,7 +229,7 @@ class SOPEngine:
 
         is_rep = ident.caller_role == "representative"
         if is_rep and not ident.rep_name:  # a representative must say who they are before anything is checked
-            facts = self._identity_facts(state, ex, refusal=ex.refusal, ask_rep_name=True)
+            facts = self._identity_facts(state, ex, ask_rep_name=True)
             return [_action(ActionKind.ASK_IDENTITY, **facts)]
         if is_rep:
             result = verify_representative(ident.rep_name, ident.provided, ident.policy_number, self.repo)
@@ -254,7 +255,7 @@ class SOPEngine:
                 actions.append(_action(ActionKind.OFFER_HUMAN))
             return actions
 
-        facts = self._identity_facts(state, ex, refusal=ex.refusal)
+        facts = self._identity_facts(state, ex)
         return [_action(ActionKind.ASK_IDENTITY, **facts)]
 
     def _poll_consent(self, state: SessionState) -> list[Action]:
@@ -271,6 +272,8 @@ class SOPEngine:
 
     def _process(self, state: SessionState, ex: TurnExtraction) -> list[Action]:
         """PROCESS_CASE: finish, or switch case. No actions means the selected case is simply answered."""
+        if ex.email_decision == "send":  # asked for the summary mid-case: no need to offer it first
+            return self._send_email(state)
         if ex.done_with_case:
             state.phase = Phase.POST_PROCESS
             return [self._offer_email(state)]
@@ -284,16 +287,19 @@ class SOPEngine:
 
     def _post_process(self, state: SessionState, ex: TurnExtraction) -> list[Action]:
         if ex.email_decision == "send":
-            message = build_email_summary(state, self.repo)
-            state.email.outbox.append(message)
-            state.email.decision, state.phase = "send", Phase.ENDED
-            return [_action(ActionKind.EMAIL_SENT, masked_email=mask_email(message.to))]
+            return self._send_email(state)
         if ex.email_decision == "skip":
             state.email.decision, state.phase = "skip", Phase.ENDED
             return [_action(ActionKind.EMAIL_SKIPPED)]
         if ex.wants_other_case or any(ex.case_hints.model_dump().values()):
             return self._switch_case(state, ex)
         return [self._offer_email(state, reprompt=True)]
+
+    def _send_email(self, state: SessionState) -> list[Action]:
+        message = build_email_summary(state, self.repo)
+        state.email.outbox.append(message)
+        state.email.decision, state.phase = "send", Phase.ENDED
+        return [_action(ActionKind.EMAIL_SENT, masked_email=mask_email(message.to))]
 
     def _offer_email(self, state: SessionState, reprompt: bool = False) -> Action:
         state.email.offered = True
@@ -313,7 +319,8 @@ class SOPEngine:
         claim = self.repo.claim_for_party(state.identity.verified_party_id, state.case.selected_case_id)
         intent = state.memory.intent or "other"
         bundle = build_case_bundle(self.repo, claim, intent, user_text, self.settings.today())
-        facts = {**bundle, "intent": intent}
+        said = [e.text for e in state.ledger if e.kind == "fact"]
+        facts = {**bundle, "intent": intent, "already_said": said}
         shown_facts, next_steps = answer_parts(facts)
         for kind, texts in (("fact", shown_facts), ("next_step", next_steps)):
             for text in texts:
@@ -330,6 +337,8 @@ class SOPEngine:
         claims = self.repo.claims_for(party)
         resolution = resolve_case(state.memory, claims)
         state.case.candidate_case_ids = resolution.candidates
+        if not claims:
+            return [_action(ActionKind.NO_CLAIMS), _action(ActionKind.OFFER_HUMAN)]
         if resolution.kind is Kind.RESOLVED:
             claim = self.repo.claim_for_party(party, resolution.case_id)
             state.case.selected_case_id = claim.case_id

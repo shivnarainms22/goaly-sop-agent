@@ -56,6 +56,7 @@ class TurnExtraction(BaseModel):
     scope: Literal["in_scope", "off_topic", "smalltalk"] = "in_scope"
     emotion: Emotion = Emotion()
     refusal: bool = False
+    asks_why: bool = False
     wants_human: bool = False
     email_decision: Literal["send", "skip", "none"] = "none"
     done_with_case: bool = False
