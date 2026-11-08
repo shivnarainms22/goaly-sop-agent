@@ -38,3 +38,11 @@ def norm_email(raw: str | None) -> str | None:
 def norm_last4(raw: str | None) -> str | None:
     runs = re.findall(r"\d{4,}", raw or "")
     return runs[-1][-4:] if runs else None
+
+
+def mask_email(raw: str | None) -> str | None:
+    email = norm_email(raw)
+    if email is None:
+        return None
+    local, domain = email.split("@")
+    return local[0] + "*" * (len(local) - 1) + "@" + domain
