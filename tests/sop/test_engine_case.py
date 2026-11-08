@@ -72,6 +72,17 @@ def test_document_submission_gives_guidance_and_alternative(make_engine, P9_DEMO
     eng, llm, state = verified_in_process_case(make_engine, P9_DEMO_EXTRACTION, [ask], mode="template")
     reply = eng.handle_turn(state, "how do I send the documents?").reply
     assert "pathology report:" in reply and "office note:" in reply and "If you can't get it:" in reply
+    # how to send them: the guideline's general submission method + healthcare-specific note
+    assert "member portal or claim upload link" in reply and "fax or mail" in reply
+    assert "treating provider or facility name" in reply
+
+
+def test_off_topic_after_verification_does_not_repeat_the_case_answer(make_engine, P9_DEMO_EXTRACTION):
+    rl = TurnExtraction(scope="off_topic", intent="other")
+    eng, llm, state = verified_in_process_case(make_engine, P9_DEMO_EXTRACTION, [rl], mode="template")
+    res = eng.handle_turn(state, "what is RL?")
+    assert kinds(res) == ["DECLINE_OFF_TOPIC", "ASK_INTENT"]
+    assert "pathology" not in res.reply and state.phase.name == "PROCESS_CASE"
 
 
 def test_unmatched_followup_uses_fallback(make_engine, P9_DEMO_EXTRACTION):

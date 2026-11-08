@@ -79,7 +79,8 @@ def answer_parts(f: dict) -> tuple[list[str], list[str]]:
             f"Expected reimbursement: ${c['expected_reimbursement_amount']}; net pay: ${c['net_pay']}."
         )
     elif intent == "document_submission":
-        steps = [
+        steps = [f"How to send: {f['submission']}"] if f["documents"] else []
+        steps += [
             f"{d['document']}: {d['guidance']} If you can't get it: {_first_sentence(d['alternatives'])}"
             for d in f["documents"]
         ]

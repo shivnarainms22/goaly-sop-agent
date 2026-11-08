@@ -189,7 +189,7 @@ class SOPEngine:
         else:
             actions = self._post_process(state, ex)
         if state.phase is Phase.PROCESS_CASE:  # however we got here, the selected case is answered now
-            if lead and not actions and ex.intent == "none":  # chat only: don't repeat the same answer
+            if lead and not actions and ex.intent in ("none", "other"):  # chat only: don't repeat the answer
                 actions.append(_action(ActionKind.ASK_INTENT))
             else:
                 actions.append(self._answer(state, user_text))

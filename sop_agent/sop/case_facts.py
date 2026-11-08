@@ -67,9 +67,16 @@ def followup_guidance(repo: Repository, claim: Claim, question: str, intent: str
 
 def build_case_bundle(repo: Repository, claim: Claim, intent: str, question: str, today: date) -> dict:
     """Everything the engine may disclose about one claim (claim must be scoped to the verified party)."""
+    g = repo.guidelines
     bundle = {
         "claim": claim_facts(claim, today),
         "documents": [document_guidance(repo, d, claim.case_type) for d in claim.documents_needed],
+        "submission": " ".join(
+            filter(
+                None,
+                [g["default_guidance"]["en"], g["case_type_guidance"].get(claim.case_type, {}).get("en")],
+            )
+        ),
         "followups": followup_guidance(repo, claim, question, intent),
     }
     if not bundle["followups"]:
