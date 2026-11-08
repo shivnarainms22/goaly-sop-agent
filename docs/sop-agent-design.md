@@ -89,9 +89,10 @@ and memory capture run in **every** phase and never change phase by themselves.
    case) so the reply after verification already uses the remembered hint.
 5. **Respond** — template reply from the action's fact bundle; in `llm` mode the phraser rewrites it (phase rules +
    tone guidance), seeing only the template, the facts and the recent transcript. No tools.
-6. **Guard** — deterministic output checks; on failure: one regeneration with feedback, then a safe templated
-   reply. (a) Pre-verification: reply must contain no case IDs, money amounts or claim dates.
-   (b) Grounding: every case ID / amount / ISO-or-month date in the reply must appear in the action facts, the
+6. **Guard** — deterministic output checks; on failure the deterministic template reply is used (no regeneration
+   loop). (a) Pre-verification: reply must contain no claim data from any fixture claim (case numbers, amounts ≥100,
+   claim dates in common formats, document names, summaries, denial-reason fragments).
+   (b) Grounding: every number / dated month in the reply must appear in the action facts, the
    ledger, or the caller's own words.
 7. **Record** — transcript, ledger, trace.
 
