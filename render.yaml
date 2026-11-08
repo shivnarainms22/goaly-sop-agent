@@ -1,0 +1,7 @@
+# No ANTHROPIC_API_KEY on purpose: testers paste their own key in the UI.
+services:
+  - type: web
+    name: goaly-sop
+    runtime: docker
+    plan: free
+    healthCheckPath: /healthz
