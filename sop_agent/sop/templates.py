@@ -144,7 +144,7 @@ _TEMPLATES = {
 
 
 def render(actions: list[Action], emotion: Emotion) -> str:
-    """Deterministic reply: empathy opener (non-neutral emotion) followed by each action's template."""
-    parts = [_OPENERS[emotion.label]] if emotion.label in _OPENERS else []
+    """Deterministic reply: empathy opener (clear emotion only) followed by each action's template."""
+    parts = [_OPENERS[emotion.label]] if emotion.strong else []
     parts += [_TEMPLATES[a.kind](a.facts) for a in actions]
     return " ".join(parts)

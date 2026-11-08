@@ -63,7 +63,7 @@ def _masked_extraction(ex: TurnExtraction) -> dict:
 
 
 def _tone(ex: TurnExtraction) -> str:
-    return "empathize" if ex.emotion.label != "neutral" else ""
+    return "empathize" if ex.emotion.strong else ""
 
 
 class SOPEngine:

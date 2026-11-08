@@ -38,6 +38,11 @@ class Emotion(BaseModel):
     label: Literal["neutral", "frustrated", "anxious", "angry", "confused"] = "neutral"
     intensity: int = Field(default=0, ge=0, le=3)
 
+    @property
+    def strong(self) -> bool:
+        """Empathy is warranted only for a clear emotion (intensity >= 2); mild signals stay neutral."""
+        return self.label != "neutral" and self.intensity >= 2
+
 
 class TurnExtraction(BaseModel):
     pii: PII = PII()
