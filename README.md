@@ -111,10 +111,23 @@ Use the UI chips or type these (consent select: `default`):
 ```bash
 uv run pytest -q                                      # offline, no network (FakeLLM)
 uv run ruff check . && uv run ruff format --check .
-uv run python -m evals.run [--only N]                 # live scenario evals, needs ANTHROPIC_API_KEY
+./done.sh                                             # the gate: tests + lint
+uv run python -m evals.run --suite all                # live evals (core + edge), needs ANTHROPIC_API_KEY
+uv run python -m evals.run --suite edge --mode template --full   # deterministic replies, printed in full
 ```
 
-Live evals assert on state (phase, verified party, selected case, no leak), not wording.
+Live evals assert on code-owned state and actions (phase, verified party, selected case, no claim leak,
+email recipient, forbidden actions/phrases), not on exact wording. Two suites:
+
+- **core** (9): the brief's demo flow, piecemeal ID with SSN refusal, frustrated caller, off-topic ×3,
+  representative with consent approved / timed out, ambiguous claim, prompt injection, skip email.
+- **edge** (31): fishing for claim details before verification, injection variants (admin mode, fake JSON),
+  wrong details ×3, mixed identities, corrections and odd formats, aliases, national-ID holders, callers
+  with no claims, repeated refusal, anger, immediate human request, unrelated queries across phases
+  (weather, code, sports, medical advice), non-English and gibberish, messy case language ("the car thing
+  from Feb"), another customer's claim ID, requests to approve a claim or change an address, appeal and
+  payment questions, an email request mid-case, an email redirected to an unverified address, unclear
+  email answers, new questions at the email offer, unknown representative, representative switching to self.
 
 ## Design trade-offs
 
