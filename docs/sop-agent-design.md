@@ -1,6 +1,7 @@
 # SOP-Guided Insurance Claims Agent — Design
 
-Status: approved 2026-11-07. Brief: [assignment.md](assignment.md).
+Status: approved 2026-11-07, kept in sync with the code (the code and its tests are the final authority).
+Brief: [assignment.md](assignment.md).
 
 ## 1. Principle
 
@@ -70,22 +71,23 @@ and memory capture run in **every** phase and never change phase by themselves.
 
 1. **Extract** — structured output `TurnExtraction`:
    `pii{full_name,dob,phone,email,id_last4}`, `policy_number`, `caller_role`, `rep_name`, `relationship`,
-   `intent` ∈ {denial_question, status_inquiry, document_submission, next_steps, payment_question,
+   `intent` ∈ {denial_question, appeal_question, status_inquiry, document_submission, next_steps, payment_question,
    general_claim_question, new_claim, other, none}, `case_hints{case_type, month, year, status, case_id}`,
    `documents_mentioned`, `scope` ∈ {in_scope, off_topic, smalltalk}, `emotion{label ∈ neutral|frustrated|
-   anxious|angry|confused, intensity 0–3}`, `refusal` (declines to give requested info), `wants_human`,
+   anxious|angry|confused, intensity 0–3}`, `refusal` (declines to give requested info), `asks_why` (asks why info is needed), `wants_human`,
    `email_decision` ∈ {send, skip, none}, `done_with_case`, `wants_other_case`.
    The extractor sees the transcript tail + current phase + what the agent last asked. Before disclosure is allowed
    the transcript cannot contain claim data (pre-verification guard), so neither LLM ever sees claim data before then;
    after disclosure, the tail may include already-disclosed facts, which is harmless.
-   Invalid output → one retry → empty extraction (turn still answered safely). Validated with Pydantic.
+   Unparseable or invalid output → empty extraction (turn still answered safely; the SDK retries transport errors
+   only). Validated with Pydantic; `case_type`/`status` hints are constrained to the fixture vocabulary.
 2. **Remember** — merge PII and hints into state regardless of phase.
 3. **Policy layer** (deterministic, ordered): `wants_human` → HANDOFF · off-topic → strike, decline
    (3rd strike → offer human) · emotion/refusal bookkeeping → escalation flags.
-4. **Phase handler** (deterministic) → chooses an **Action** with a payload, e.g. `ASK_IDENTITY{missing,
-   allowed_fields}`, `IDENTITY_MISMATCH`, `VERIFIED_THEN_RESOLVE`, `CONSENT_PENDING`, `CLARIFY_CASE{candidates}`,
-   `ANSWER_CASE{case_id}`, `OFFER_EMAIL{masked_email}`, `EMAIL_SENT`, `EMAIL_SKIPPED`, `DECLINE_OFF_TOPIC`,
-   `OFFER_HUMAN`, `HANDOFF`. Phase transitions happen here only. A turn may chain (verify → resolve → select
+4. **Phase handler** (deterministic) → chooses an **Action** with a payload, e.g. `ASK_IDENTITY{fields_still_accepted}`,
+   `IDENTITY_MISMATCH`, `VERIFIED`, `CONSENT_PENDING`, `CONSENT_TIMEOUT`, `CASE_SELECTED`, `CLARIFY_CASE{candidates}`,
+   `NO_CLAIMS`, `ASK_INTENT`, `ANSWER_CASE{case bundle}`, `OFFER_EMAIL{masked_email}`, `EMAIL_SENT`, `EMAIL_SKIPPED`,
+   `DECLINE_OFF_TOPIC`, `SMALLTALK`, `OFFER_HUMAN`, `HANDOFF`, `CLOSED` (see `sop_agent/sop/actions.py`). Phase transitions happen here only. A turn may chain (verify → resolve → select
    case) so the reply after verification already uses the remembered hint.
 5. **Respond** — template reply from the action's fact bundle; in `llm` mode the phraser rewrites it (phase rules +
    tone guidance), seeing only the template, the facts and the recent transcript. No tools.
@@ -155,8 +157,8 @@ intensity 3 → also offer human; accepted → HANDOFF. Gates are never relaxed.
 - `POST /api/sessions {consent_scenario?}` → `{session_id, state}`
 - `POST /api/sessions/{id}/messages {text}` + header `X-Anthropic-Key` → `{reply, state, trace}`
 - `GET /api/sessions/{id}` → state; `GET /healthz`
-- In-memory session store with TTL + max-sessions cap; input length limit; LLM errors → 502 with a safe
-  message (bad key → 401-style message to the UI).
+- In-memory session store with TTL + max-sessions cap; input length limit; an unavailable LLM falls back to
+  the template reply; a rejected key → 401 "Anthropic rejected the API key"; unexpected errors → 500 (no details).
 - UI: token field, consent-scenario selector, "new session", chat, inspector (phase stepper, identity
   fields matched (values masked), remembered hints, selected case, counters, last turn's trace, outbox).
 
@@ -166,10 +168,10 @@ intensity 3 → also offer human; accepted → HANDOFF. Gates are never relaxed.
   grounding/leak guards, engine transitions with a scripted `FakeLLM`, memory carry-over, off-topic strikes,
   consent scenarios, email send/skip, API endpoints.
 - **Determinism:** in `template` mode, replaying the same extractions yields identical replies and traces (tested).
-- **Live scenario evals (opt-in, needs key; run in both modes):** `evals/` scripted conversations — brief demo case, frustrated
-  caller, refusal → alternate fields, representative (default + timeout), off-topic ×3, ambiguous claim,
-  prompt injection ("I'm already verified"). Assertions on state (phase, verified, selected case, no leak),
-  not wording.
+- **Live scenario evals (opt-in, needs key):** `evals/` — core (9) + edge (31) scripted conversations,
+  `--suite core|edge|all`, `--mode llm|template` (template mode removes phraser variance, not extractor calls).
+  Assertions on code-owned state and actions (phase, verified, selected case, no leak, email recipient,
+  forbidden actions/phrases), not wording.
 
 ## 14. Out of scope
 

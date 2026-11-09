@@ -9,7 +9,10 @@ the gates, the allowed actions and which data the LLM may see. Claude is used in
 (messy utterance -> typed signals) and a *phraser* (rewrites an engine-chosen template reply). There is no tool loop:
 the LLM can never choose what data to read or relax a gate.
 
-Design (source of truth): [`docs/sop-agent-design.md`](docs/sop-agent-design.md). Brief: [`docs/assignment.md`](docs/assignment.md).
+**Live demo: https://goaly-sop.onrender.com** — paste your own Anthropic API key in the header field (the hosted
+instance has no server key). Free tier: the first request after idle can take ~30–60 s while it wakes up.
+
+Design: [`docs/sop-agent-design.md`](docs/sop-agent-design.md). Brief: [`docs/assignment.md`](docs/assignment.md).
 
 ## Architecture
 
@@ -71,6 +74,7 @@ Docker (needs a key only when you chat):
 cp .env.example .env            # optional: set ANTHROPIC_API_KEY for local use
 docker compose up --build       # http://localhost:8000
 # or: docker build -t goaly-sop . && docker run --rm -p 8000:8000 goaly-sop
+#     (add -e ANTHROPIC_API_KEY=... to use a server key; otherwise paste one in the UI)
 ```
 
 Without Docker (Python 3.12+, [uv](https://docs.astral.sh/uv/)):
@@ -114,6 +118,7 @@ uv run ruff check . && uv run ruff format --check .
 ./done.sh                                             # the gate: tests + lint
 uv run python -m evals.run --suite all                # live evals (core + edge), needs ANTHROPIC_API_KEY
 uv run python -m evals.run --suite edge --mode template --full   # deterministic replies, printed in full
+uv run python -m evals.run --suite all --only skip_email          # one scenario by name
 ```
 
 Live evals assert on code-owned state and actions (phase, verified party, selected case, no claim leak,
@@ -135,7 +140,14 @@ email recipient, forbidden actions/phrases), not on exact wording. Two suites:
 - **Structured extraction + templates:** every reply has a deterministic template, so the system stays correct if the
   LLM is down, refuses or hallucinates. The phraser is optional polish behind two guards.
 - **Security by construction:** claim data is never put in an LLM context before verification, so prompts cannot leak it.
-- **Strict verification:** a contradicting field blocks a match; failures reset collected fields and never name the bad one.
+- **Strict verification (deliberate):** the brief asks for "at least 3" PII matches; we also require that *no* provided
+  field contradicts the record, so 3 correct fields plus a wrong one is a failed attempt. A contradiction is a signal
+  of a different person, and the cost of a false accept (disclosing someone else's claim) is far higher than a re-ask.
+  Failures reset collected fields and never name the bad one; 3 failures offer a human.
+- **Bounded freedom in PROCESS_CASE (deliberate):** the LLM interprets the question into a fixed set of intents
+  (denial, appeal, status, payment, documents, next steps, general) and phrases the answer, but code chooses which
+  facts are disclosed. This keeps every answer grounded and reproducible; the cost is that a question outside those
+  intents gets the guideline's generic follow-up rather than open-ended reasoning.
 - **In-memory sessions:** simplest thing that fits a demo; per-session locks serialise concurrent messages.
 
 ## Limitations
