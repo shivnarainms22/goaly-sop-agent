@@ -1,5 +1,10 @@
 # SOP-guided insurance claims agent
 
+| | |
+|---|---|
+| **Live demo** | https://goaly-sop.onrender.com (paste your own Anthropic API key in the header field) |
+| **Repository** | https://github.com/shivnarainms22/goaly-sop-agent |
+
 A conversational insurance support agent that follows a fixed business workflow
 (`VERIFY_ID -> RESOLVE_INTENT -> PROCESS_CASE -> POST_PROCESS`) yet talks naturally. Includes a chat UI with a live
 **SOP inspector** that shows, for every turn, what was extracted, what the code decided and why.
@@ -9,8 +14,8 @@ the gates, the allowed actions and which data the LLM may see. Claude is used in
 (messy utterance -> typed signals) and a *phraser* (rewrites an engine-chosen template reply). There is no tool loop:
 the LLM can never choose what data to read or relax a gate.
 
-**Live demo: https://goaly-sop.onrender.com** — paste your own Anthropic API key in the header field (the hosted
-instance has no server key). Free tier: the first request after idle can take ~30–60 s while it wakes up.
+**About the live demo:** the hosted instance has no server key, so paste your own Anthropic API key in the header
+field. It runs on a free tier: the first request after idle can take ~30–60 s while it wakes up.
 
 Design: [`docs/sop-agent-design.md`](docs/sop-agent-design.md). Brief: [`docs/assignment.md`](docs/assignment.md).
 
