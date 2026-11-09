@@ -29,6 +29,7 @@ addopts = "-m 'not live'"
 
 [tool.ruff]
 line-length = 110
+extend-exclude = ["docs"]  # design/plan docs contain illustrative snippets, not project code
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
